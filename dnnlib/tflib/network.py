@@ -10,7 +10,7 @@
 import types
 import inspect
 import numpy as np
-import tensorflow as tf
+import tensorflow._api.v2.compat.v1 as tf
 
 from collections import OrderedDict
 from typing import List, Tuple, Union
@@ -20,7 +20,8 @@ from .. import util
 
 from .tfutil import TfExpression, TfExpressionEx
 
-_import_handlers = []  # Custom import handlers for dealing with legacy data in pickle import.
+# Custom import handlers for dealing with legacy data in pickle import.
+_import_handlers = []
 _import_modules = []  # Temporary modules create during pickle import.
 
 
@@ -75,9 +76,11 @@ class Network:
         self.static_kwargs = util.EasyDict(static_kwargs)
 
         # Init build func.
-        module, self._build_func_name = util.get_module_from_obj_name(func_name)
+        module, self._build_func_name = util.get_module_from_obj_name(
+            func_name)
         self._build_module_src = inspect.getsource(module)
-        self._build_func = util.get_obj_from_module(module, self._build_func_name)
+        self._build_func = util.get_obj_from_module(
+            module, self._build_func_name)
 
         # Init graph.
         self._init_graph()
@@ -100,9 +103,11 @@ class Network:
         self.vars = OrderedDict()
         self.trainables = OrderedDict()
 
-        self._build_func = None  # User-supplied build function that constructs the network.
+        # User-supplied build function that constructs the network.
+        self._build_func = None
         self._build_func_name = None  # Name of the build function.
-        self._build_module_src = None  # Full source code of the module containing the build function.
+        # Full source code of the module containing the build function.
+        self._build_module_src = None
         self._run_cache = dict()  # Cached graph data for Network.run().
 
     def _init_graph(self) -> None:
@@ -120,39 +125,52 @@ class Network:
         if self.name is None:
             self.name = self._build_func_name
 
-        self.scope = tf.get_default_graph().unique_name(self.name.replace("/", "_"), mark_as_used=False)
+        self.scope = tf.get_default_graph().unique_name(
+            self.name.replace("/", "_"), mark_as_used=False)
 
         # Build template graph.
         with tf.variable_scope(self.scope, reuse=tf.AUTO_REUSE):
             assert tf.get_variable_scope().name == self.scope
 
-            with tfutil.absolute_name_scope(self.scope):  # ignore surrounding name_scope
-                with tf.control_dependencies(None):  # ignore surrounding control_dependencies
-                    self.input_templates = [tf.placeholder(tf.float32, name=name) for name in self.input_names]
+            # ignore surrounding name_scope
+            with tfutil.absolute_name_scope(self.scope):
+                # ignore surrounding control_dependencies
+                with tf.control_dependencies(None):
+                    self.input_templates = [tf.placeholder(
+                        tf.float32, name=name) for name in self.input_names]
                     assert callable(self._build_func)
-                    out_expr = self._build_func(*self.input_templates, is_template_graph=True, **self.static_kwargs)
+                    out_expr = self._build_func(
+                        *self.input_templates, is_template_graph=True, **self.static_kwargs)
 
         # Collect outputs.
         assert tfutil.is_tf_expression(out_expr) or isinstance(out_expr, tuple)
-        self.output_templates = [out_expr] if tfutil.is_tf_expression(out_expr) else list(out_expr)
+        self.output_templates = [out_expr] if tfutil.is_tf_expression(
+            out_expr) else list(out_expr)
         self.num_outputs = len(self.output_templates)
         assert self.num_outputs >= 1
         assert all(tfutil.is_tf_expression(t) for t in self.output_templates)
 
         # Check that input and output shapes are defined.
         if any(t.shape.ndims is None for t in self.input_templates):
-            raise ValueError("Network input shapes not defined. Please call x.set_shape() for each input.")
+            raise ValueError(
+                "Network input shapes not defined. Please call x.set_shape() for each input.")
         if any(t.shape.ndims is None for t in self.output_templates):
-            raise ValueError("Network output shapes not defined. Please call x.set_shape() where applicable.")
+            raise ValueError(
+                "Network output shapes not defined. Please call x.set_shape() where applicable.")
 
         # Populate remaining fields.
-        self.input_shapes = [tfutil.shape_to_list(t.shape) for t in self.input_templates]
-        self.output_shapes = [tfutil.shape_to_list(t.shape) for t in self.output_templates]
+        self.input_shapes = [tfutil.shape_to_list(
+            t.shape) for t in self.input_templates]
+        self.output_shapes = [tfutil.shape_to_list(
+            t.shape) for t in self.output_templates]
         self.input_shape = self.input_shapes[0]
         self.output_shape = self.output_shapes[0]
-        self.output_names = [t.name.split("/")[-1].split(":")[0] for t in self.output_templates]
-        self.vars = OrderedDict([(self.get_var_local_name(var), var) for var in tf.global_variables(self.scope + "/")])
-        self.trainables = OrderedDict([(self.get_var_local_name(var), var) for var in tf.trainable_variables(self.scope + "/")])
+        self.output_names = [t.name.split(
+            "/")[-1].split(":")[0] for t in self.output_templates]
+        self.vars = OrderedDict([(self.get_var_local_name(var), var)
+                                for var in tf.global_variables(self.scope + "/")])
+        self.trainables = OrderedDict([(self.get_var_local_name(
+            var), var) for var in tf.trainable_variables(self.scope + "/")])
 
     def reset_vars(self) -> None:
         """Run initializers for all variables defined by this network."""
@@ -178,7 +196,8 @@ class Network:
                 if expr is not None:
                     expr = tf.identity(expr, name=name)
                 else:
-                    expr = tf.zeros([tf.shape(valid_inputs[0])[0]] + shape[1:], name=name)
+                    expr = tf.zeros([tf.shape(valid_inputs[0])[
+                                    0]] + shape[1:], name=name)
                 final_inputs.append(expr)
             assert callable(self._build_func)
             out_expr = self._build_func(*final_inputs, **all_kwargs)
@@ -186,14 +205,17 @@ class Network:
         assert tfutil.is_tf_expression(out_expr) or isinstance(out_expr, tuple)
 
         if return_as_list:
-            out_expr = [out_expr] if tfutil.is_tf_expression(out_expr) else list(out_expr)
+            out_expr = [out_expr] if tfutil.is_tf_expression(
+                out_expr) else list(out_expr)
 
         return out_expr
 
     def get_var_local_name(self, var_or_global_name: Union[TfExpression, str]) -> str:
         """Get the local name of a given variable, excluding any surrounding name scopes."""
-        assert tfutil.is_tf_expression(var_or_global_name) or isinstance(var_or_global_name, str)
-        global_name = var_or_global_name if isinstance(var_or_global_name, str) else var_or_global_name.name
+        assert tfutil.is_tf_expression(
+            var_or_global_name) or isinstance(var_or_global_name, str)
+        global_name = var_or_global_name if isinstance(
+            var_or_global_name, str) else var_or_global_name.name
         assert global_name.startswith(self.scope + "/")
         local_name = global_name[len(self.scope) + 1:]
         local_name = local_name.split(":")[0]
@@ -201,7 +223,8 @@ class Network:
 
     def find_var(self, var_or_local_name: Union[TfExpression, str]) -> TfExpression:
         """Find variable by local or global name."""
-        assert tfutil.is_tf_expression(var_or_local_name) or isinstance(var_or_local_name, str)
+        assert tfutil.is_tf_expression(
+            var_or_local_name) or isinstance(var_or_local_name, str)
         return self.vars[var_or_local_name] if isinstance(var_or_local_name, str) else var_or_local_name
 
     def get_var(self, var_or_local_name: Union[TfExpression, str]) -> np.ndarray:
@@ -241,15 +264,18 @@ class Network:
         self._build_func_name = state["build_func_name"]
 
         # Parse imported module.
-        module = types.ModuleType("_tfutil_network_import_module_%d" % len(_import_modules))
-        exec(self._build_module_src, module.__dict__) # pylint: disable=exec-used
-        self._build_func = util.get_obj_from_module(module, self._build_func_name)
+        module = types.ModuleType(
+            "_tfutil_network_import_module_%d" % len(_import_modules))
+        exec(self._build_module_src, module.__dict__)  # pylint: disable=exec-used
+        self._build_func = util.get_obj_from_module(
+            module, self._build_func_name)
         _import_modules.append(module)  # avoid gc
 
         # Init graph.
         self._init_graph()
         self.reset_vars()
-        tfutil.set_vars({self.find_var(name): value for name, value in state["variables"]})
+        tfutil.set_vars({self.find_var(name): value for name,
+                        value in state["variables"]})
 
     def clone(self, name: str = None) -> "Network":
         """Create a clone of this network with its own copy of the variables."""
@@ -268,12 +294,15 @@ class Network:
     def copy_vars_from(self, src_net: "Network") -> None:
         """Copy the values of all variables from the given network."""
         names = [name for name in self.vars.keys() if name in src_net.vars]
-        tfutil.set_vars(tfutil.run({self.vars[name]: src_net.vars[name] for name in names}))
+        tfutil.set_vars(tfutil.run(
+            {self.vars[name]: src_net.vars[name] for name in names}))
 
     def copy_trainables_from(self, src_net: "Network") -> None:
         """Copy the values of all trainable variables from the given network."""
-        names = [name for name in self.trainables.keys() if name in src_net.trainables]
-        tfutil.set_vars(tfutil.run({self.vars[name]: src_net.vars[name] for name in names}))
+        names = [name for name in self.trainables.keys()
+                 if name in src_net.trainables]
+        tfutil.set_vars(tfutil.run(
+            {self.vars[name]: src_net.vars[name] for name in names}))
 
     def convert(self, new_func_name: str, new_name: str = None, **new_static_kwargs) -> "Network":
         """Create new network with the given parameters, and copy all variables from this network."""
@@ -295,7 +324,8 @@ class Network:
                 for name, var in self.vars.items():
                     if name in src_net.vars:
                         cur_beta = beta if name in self.trainables else beta_nontrainable
-                        new_value = tfutil.lerp(src_net.vars[name], var, cur_beta)
+                        new_value = tfutil.lerp(
+                            src_net.vars[name], var, cur_beta)
                         ops.append(var.assign(new_value))
 
                 return tf.group(*ops)
@@ -333,20 +363,24 @@ class Network:
         if minibatch_size is None:
             minibatch_size = num_items
 
-        key = str([list(sorted(dynamic_kwargs.items())), num_gpus, out_mul, out_add, out_shrink, out_dtype])
+        key = str([list(sorted(dynamic_kwargs.items())), num_gpus,
+                  out_mul, out_add, out_shrink, out_dtype])
 
         # Build graph.
         if key not in self._run_cache:
             with tfutil.absolute_name_scope(self.scope + "/Run"), tf.control_dependencies(None):
                 with tf.device("/cpu:0"):
-                    in_expr = [tf.placeholder(tf.float32, name=name) for name in self.input_names]
-                    in_split = list(zip(*[tf.split(x, num_gpus) for x in in_expr]))
+                    in_expr = [tf.placeholder(tf.float32, name=name)
+                               for name in self.input_names]
+                    in_split = list(
+                        zip(*[tf.split(x, num_gpus) for x in in_expr]))
 
                 out_split = []
                 for gpu in range(num_gpus):
                     with tf.device("/gpu:%d" % gpu):
                         net = self.clone() if assume_frozen else self
-                        out_expr = net.get_output_for(*in_split[gpu], return_as_list=True, **dynamic_kwargs)
+                        out_expr = net.get_output_for(
+                            *in_split[gpu], return_as_list=True, **dynamic_kwargs)
 
                         if out_mul != 1.0:
                             out_expr = [x * out_mul for x in out_expr]
@@ -356,22 +390,26 @@ class Network:
 
                         if out_shrink > 1:
                             ksize = [1, 1, out_shrink, out_shrink]
-                            out_expr = [tf.nn.avg_pool(x, ksize=ksize, strides=ksize, padding="VALID", data_format="NCHW") for x in out_expr]
+                            out_expr = [tf.nn.avg_pool(
+                                x, ksize=ksize, strides=ksize, padding="VALID", data_format="NCHW") for x in out_expr]
 
                         if out_dtype is not None:
                             if tf.as_dtype(out_dtype).is_integer:
                                 out_expr = [tf.round(x) for x in out_expr]
-                            out_expr = [tf.saturate_cast(x, out_dtype) for x in out_expr]
+                            out_expr = [tf.saturate_cast(
+                                x, out_dtype) for x in out_expr]
 
                         out_split.append(out_expr)
 
                 with tf.device("/cpu:0"):
-                    out_expr = [tf.concat(outputs, axis=0) for outputs in zip(*out_split)]
+                    out_expr = [tf.concat(outputs, axis=0)
+                                for outputs in zip(*out_split)]
                     self._run_cache[key] = in_expr, out_expr
 
         # Run minibatches.
         in_expr, out_expr = self._run_cache[key]
-        out_arrays = [np.empty([num_items] + tfutil.shape_to_list(expr.shape)[1:], expr.dtype.name) for expr in out_expr]
+        out_arrays = [np.empty([num_items] + tfutil.shape_to_list(expr.shape)
+                               [1:], expr.dtype.name) for expr in out_expr]
 
         for mb_begin in range(0, num_items, minibatch_size):
             if print_progress:
@@ -379,7 +417,8 @@ class Network:
 
             mb_end = min(mb_begin + minibatch_size, num_items)
             mb_num = mb_end - mb_begin
-            mb_in = [src[mb_begin : mb_end] if src is not None else np.zeros([mb_num] + shape[1:]) for src, shape in zip(in_arrays, self.input_shapes)]
+            mb_in = [src[mb_begin: mb_end] if src is not None else np.zeros(
+                [mb_num] + shape[1:]) for src, shape in zip(in_arrays, self.input_shapes)]
             mb_out = tf.get_default_session().run(out_expr, dict(zip(in_expr, mb_in)))
 
             for dst, src in zip(out_arrays, mb_out):
@@ -390,7 +429,8 @@ class Network:
             print("\r%d / %d" % (num_items, num_items))
 
         if not return_as_list:
-            out_arrays = out_arrays[0] if len(out_arrays) == 1 else tuple(out_arrays)
+            out_arrays = out_arrays[0] if len(
+                out_arrays) == 1 else tuple(out_arrays)
 
         return out_arrays
 
@@ -405,7 +445,8 @@ class Network:
 
         def recurse(scope, parent_ops, level):
             prefix = scope + "/"
-            ops = [op for op in parent_ops if op.name == scope or op.name.startswith(prefix)]
+            ops = [op for op in parent_ops if op.name ==
+                   scope or op.name.startswith(prefix)]
 
             # Ignore specific patterns.
             if any(p in scope for p in ["/Shape", "/strided_slice", "/Cast", "/concat"]):
@@ -435,7 +476,8 @@ class Network:
             # Dig up the details for this layer.
             layer_name = scope[len(self.scope) + 1:]
             layer_output = ops[-1].outputs[0]
-            layer_trainables = [op.outputs[0] for op in layer_vars if self.get_var_local_name(op.name) in self.trainables]
+            layer_trainables = [op.outputs[0] for op in layer_vars if self.get_var_local_name(
+                op.name) in self.trainables]
             layers.append((layer_name, layer_output, layer_trainables))
 
         recurse(self.scope, self.list_ops(), 0)
@@ -447,14 +489,17 @@ class Network:
             title = self.name
 
         print()
-        print("%-28s%-12s%-24s%-24s" % (title, "Params", "OutputShape", "WeightShape"))
+        print("%-28s%-12s%-24s%-24s" %
+              (title, "Params", "OutputShape", "WeightShape"))
         print("%-28s%-12s%-24s%-24s" % (("---",) * 4))
 
         total_params = 0
 
         for layer_name, layer_output, layer_trainables in self.list_layers():
-            weights = [var for var in layer_trainables if var.name.endswith("/weight:0")]
-            num_params = sum(np.prod(tfutil.shape_to_list(var.shape)) for var in layer_trainables)
+            weights = [
+                var for var in layer_trainables if var.name.endswith("/weight:0")]
+            num_params = sum(np.prod(tfutil.shape_to_list(var.shape))
+                             for var in layer_trainables)
             total_params += num_params
 
             if hide_layers_with_no_params and num_params == 0:

@@ -8,7 +8,7 @@
 """Miscellaneous helper utils for Tensorflow."""
 
 import numpy as np
-import tensorflow as tf
+import tensorflow._api.v2.compat.v1 as tf
 
 from typing import Any, Iterable, List, Union
 
@@ -30,7 +30,7 @@ def is_tf_expression(x: Any) -> bool:
     return isinstance(x, (tf.Tensor, tf.Variable, tf.Operation))
 
 
-def shape_to_list(shape: Iterable[tf.Dimension]) -> List[Union[int, None]]:
+def shape_to_list(shape: Iterable[tf.compat.v1.Dimension]) -> List[Union[int, None]]:
     """Convert a Tensorflow shape to a list of ints."""
     return [dim.value for dim in shape]
 
@@ -80,12 +80,13 @@ def init_tf(config_dict: dict = None) -> None:
 def assert_tf_initialized():
     """Check that TensorFlow session has been initialized."""
     if tf.get_default_session() is None:
-        raise RuntimeError("No default TensorFlow session found. Please call dnnlib.tflib.tfutil.init_tf().")
+        raise RuntimeError(
+            "No default TensorFlow session found. Please call dnnlib.tflib.tfutil.init_tf().")
 
 
-def create_session(config_dict: dict = None, force_as_default: bool = False) -> tf.Session:
+def create_session(config_dict: dict = None, force_as_default: bool = False) -> tf.compat.v1.Session:
     """Create tf.Session based on config dict."""
-    config = tf.ConfigProto()
+    config = tf.compat.v1.ConfigProto()
 
     if config_dict is not None:
         for key, value in config_dict.items():
@@ -97,13 +98,13 @@ def create_session(config_dict: dict = None, force_as_default: bool = False) -> 
 
             setattr(obj, fields[-1], value)
 
-    session = tf.Session(config=config)
+    session = tf.compat.v1.Session(config=config)
 
     if force_as_default:
         # pylint: disable=protected-access
         session._default_session = session.as_default()
         session._default_session.enforce_nesting = False
-        session._default_session.__enter__() # pylint: disable=no-member
+        session._default_session.__enter__()  # pylint: disable=no-member
 
     return session
 
@@ -121,12 +122,14 @@ def init_uninitialized_vars(target_vars: List[tf.Variable] = None) -> None:
     test_vars = []
     test_ops = []
 
-    with tf.control_dependencies(None):  # ignore surrounding control_dependencies
+    # ignore surrounding control_dependencies
+    with tf.control_dependencies(None):
         for var in target_vars:
             assert is_tf_expression(var)
 
             try:
-                tf.get_default_graph().get_tensor_by_name(var.name.replace(":0", "/IsVariableInitialized:0"))
+                tf.get_default_graph().get_tensor_by_name(
+                    var.name.replace(":0", "/IsVariableInitialized:0"))
             except KeyError:
                 # Op does not exist => variable may be uninitialized.
                 test_vars.append(var)
@@ -134,7 +137,8 @@ def init_uninitialized_vars(target_vars: List[tf.Variable] = None) -> None:
                 with absolute_name_scope(var.name.split(":")[0]):
                     test_ops.append(tf.is_variable_initialized(var))
 
-    init_vars = [var for var, inited in zip(test_vars, run(test_ops)) if not inited]
+    init_vars = [var for var, inited in zip(
+        test_vars, run(test_ops)) if not inited]
     run([var.initializer for var in init_vars])
 
 
@@ -152,11 +156,14 @@ def set_vars(var_to_value_dict: dict) -> None:
         assert is_tf_expression(var)
 
         try:
-            setter = tf.get_default_graph().get_tensor_by_name(var.name.replace(":0", "/setter:0"))  # look for existing op
+            setter = tf.get_default_graph().get_tensor_by_name(
+                var.name.replace(":0", "/setter:0"))  # look for existing op
         except KeyError:
             with absolute_name_scope(var.name.split(":")[0]):
-                with tf.control_dependencies(None):  # ignore surrounding control_dependencies
-                    setter = tf.assign(var, tf.placeholder(var.dtype, var.shape, "new_value"), name="setter")  # create new setter
+                # ignore surrounding control_dependencies
+                with tf.control_dependencies(None):
+                    setter = tf.assign(var, tf.placeholder(
+                        var.dtype, var.shape, "new_value"), name="setter")  # create new setter
 
         ops.append(setter)
         feed_dict[setter.op.inputs[1]] = value

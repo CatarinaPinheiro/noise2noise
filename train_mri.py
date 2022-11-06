@@ -10,27 +10,88 @@ import math
 import time
 
 import numpy as np
-import tensorflow as tf
+import tensorflow._api.v2.compat.v1 as tf
 import scipy
 
 import dnnlib
 import dnnlib.submission.submit as submit
 from dnnlib.tflib.autosummary import autosummary
 import dnnlib.tflib.tfutil as tfutil
+from PIL import Image
 
 import config_mri
 import util
+from numpy import (amin, amax, ravel, asarray, arange, ones, newaxis,
+                   transpose, iscomplexobj, uint8, issubdtype, array)
 
-#----------------------------------------------------------------------------
+tf.disable_v2_behavior()
+
+tf.disable_eager_execution()
+
+
+def bytescale(data, cmin=None, cmax=None, high=255, low=0):
+    """
+    Byte scales an array (image).
+    Byte scaling means converting the input image to uint8 dtype and scaling
+    the range to ``(low, high)`` (default 0-255).
+    If the input image already has dtype uint8, no scaling is done.
+    This function is only available if Python Imaging Library (PIL) is installed.
+    Parameters
+    ----------
+    data : ndarray
+        PIL image data array.
+    cmin : scalar, optional
+        Bias scaling of small values. Default is ``data.min()``.
+    cmax : scalar, optional
+        Bias scaling of large values. Default is ``data.max()``.
+    high : scalar, optional
+        Scale max value to `high`.  Default is 255.
+    low : scalar, optional
+        Scale min value to `low`.  Default is 0.
+    Returns
+    -------
+    img_array : uint8 ndarray
+        The byte-scaled array.
+
+    """
+    if data.dtype == uint8:
+        return data
+
+    if high > 255:
+        raise ValueError("`high` should be less than or equal to 255.")
+    if low < 0:
+        raise ValueError("`low` should be greater than or equal to 0.")
+    if high < low:
+        raise ValueError("`high` should be greater than or equal to `low`.")
+
+    if cmin is None:
+        cmin = data.min()
+    if cmax is None:
+        cmax = data.max()
+
+    cscale = cmax - cmin
+    if cscale < 0:
+        raise ValueError("`cmax` should be larger than `cmin`.")
+    elif cscale == 0:
+        cscale = 1
+
+    scale = float(high - low) / cscale
+    bytedata = (data - cmin) * scale + low
+    return (bytedata.clip(low, high) + 0.5).astype(uint8)
+
+# ----------------------------------------------------------------------------
 # The network.
+
 
 def autoencoder(input):
     def conv(n, name, n_out, size=3, gain=np.sqrt(2)):
         with tf.variable_scope(name):
             wshape = [size, size, int(n.get_shape()[-1]), n_out]
-            wstd = gain / np.sqrt(np.prod(wshape[:-1])) # He init
-            W = tf.get_variable('W', shape=wshape, initializer=tf.initializers.random_normal(0., wstd))
-            b = tf.get_variable('b', shape=[n_out], initializer=tf.initializers.zeros())
+            wstd = gain / np.sqrt(np.prod(wshape[:-1]))  # He init
+            W = tf.get_variable(
+                'W', shape=wshape, initializer=tf.initializers.random_normal(0., wstd))
+            b = tf.get_variable(
+                'b', shape=[n_out], initializer=tf.initializers.zeros())
             n = tf.nn.conv2d(n, W, strides=[1]*4, padding='SAME')
             n = tf.nn.bias_add(n, b)
         return n
@@ -43,13 +104,16 @@ def autoencoder(input):
             n = tf.reshape(n, [s[0], s[1] * f, s[2] * f, s[3]])
         return n
 
-    def down(n, name, f=2):     return tf.nn.max_pool(n, ksize=[1, f, f, 1], strides=[1, f, f, 1], padding='SAME', name=name)
-    def concat(name, layers):   return tf.concat(layers, axis=-1, name=name)
-    def LR(n):                  return tf.nn.leaky_relu(n, alpha=0.1, name='lrelu')
+    def down(n, name, f=2): return tf.nn.max_pool(
+        n, ksize=[1, f, f, 1], strides=[1, f, f, 1], padding='SAME', name=name)
+
+    def concat(name, layers): return tf.concat(layers, axis=-1, name=name)
+    def LR(n): return tf.nn.leaky_relu(n, alpha=0.1, name='lrelu')
 
     # Make even size and add the channel dimension.
 
-    input = tf.pad(input, ((0, 0), (0, 1), (0, 1)), 'constant', constant_values=-.5)
+    input = tf.pad(input, ((0, 0), (0, 1), (0, 1)),
+                   'constant', constant_values=-.5)
     input = tf.expand_dims(input, axis=-1)
 
     # Encoder part.
@@ -57,16 +121,20 @@ def autoencoder(input):
     x = input
     x = LR(conv(x, 'enc_conv0', 48))
     x = LR(conv(x, 'enc_conv1', 48))
-    x = down(x, 'pool1'); pool1 = x
+    x = down(x, 'pool1')
+    pool1 = x
 
     x = LR(conv(x, 'enc_conv2', 48))
-    x = down(x, 'pool2'); pool2 = x
+    x = down(x, 'pool2')
+    pool2 = x
 
     x = LR(conv(x, 'enc_conv3', 48))
-    x = down(x, 'pool3'); pool3 = x
+    x = down(x, 'pool3')
+    pool3 = x
 
     x = LR(conv(x, 'enc_conv4', 48))
-    x = down(x, 'pool4'); pool4 = x
+    x = down(x, 'pool4')
+    pool4 = x
 
     x = LR(conv(x, 'enc_conv5', 48))
     x = down(x, 'pool5')
@@ -106,14 +174,15 @@ def autoencoder(input):
 
     return tf.squeeze(x, axis=-1)[:, :-1, :-1]
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Dataset loader
+
 
 def load_dataset(fn, num_images=None, shuffle=False):
     datadir = submit.get_path_from_template(config_mri.data_dir)
     if fn.lower().endswith('.pkl'):
         abspath = os.path.join(datadir, fn)
-        print ('Loading dataset from', abspath)
+        print('Loading dataset from', abspath)
         img, spec = util.load_pkl(abspath)
     else:
         assert False
@@ -139,8 +208,9 @@ def load_dataset(fn, num_images=None, shuffle=False):
 
     return img, spec
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Dataset iterator.
+
 
 def fftshift2d(x, ifft=False):
     assert (len(x.shape) == 2) and all([(s % 2 == 1) for s in x.shape])
@@ -150,7 +220,10 @@ def fftshift2d(x, ifft=False):
     x = np.concatenate([x[:, s1:], x[:, :s1]], axis=1)
     return x
 
+
 bernoulli_mask_cache = dict()
+
+
 def corrupt_data(img, spec, params):
     ctype = params['type']
     assert ctype == 'bspec'
@@ -170,11 +243,15 @@ def corrupt_data(img, spec, params):
     keep = keep & keep[::-1, ::-1]
     sval = spec * keep
     smsk = keep.astype(np.float32)
-    spec = fftshift2d(sval / (mask + ~keep), ifft=True) # Add 1.0 to not-kept values to prevent div-by-zero.
+    # Add 1.0 to not-kept values to prevent div-by-zero.
+    spec = fftshift2d(sval / (mask + ~keep), ifft=True)
     img = np.real(np.fft.ifft2(spec)).astype(np.float32)
     return img, sval, smsk
 
+
 augment_translate_cache = dict()
+
+
 def augment_data(img, spec, params):
     t = params.get('translate', 0)
     if t > 0:
@@ -184,10 +261,12 @@ def augment_data(img, spec, params):
         if key not in augment_translate_cache:
             x = np.zeros_like(img)
             x[trans[0], trans[1]] = 1.0
-            augment_translate_cache[key] = fftshift2d(np.fft.fft2(x).astype(np.complex64))
+            augment_translate_cache[key] = fftshift2d(
+                np.fft.fft2(x).astype(np.complex64))
         img = np.roll(img, trans, axis=(0, 1))
         spec = spec * augment_translate_cache[key]
     return img, spec
+
 
 def iterate_minibatches(input_img, input_spec, batch_size, shuffle, corrupt_targets, corrupt_params, augment_params=dict(), max_images=None):
     assert input_img.shape[0] == input_spec.shape[0]
@@ -203,12 +282,13 @@ def iterate_minibatches(input_img, input_spec, batch_size, shuffle, corrupt_targ
 
     for start_idx in range(0, num, batch_size):
         if start_idx + batch_size <= num:
-            indices = all_indices[start_idx : start_idx + batch_size]
+            indices = all_indices[start_idx: start_idx + batch_size]
             inputs, targets = [], []
             spec_val, spec_mask = [], []
 
             for i in indices:
-                img, spec = augment_data(input_img[i], input_spec[i], augment_params)
+                img, spec = augment_data(
+                    input_img[i], input_spec[i], augment_params)
                 inp, sv, sm = corrupt_data(img, spec, corrupt_params)
                 inputs.append(inp)
                 spec_val.append(sv)
@@ -221,8 +301,9 @@ def iterate_minibatches(input_img, input_spec, batch_size, shuffle, corrupt_targ
 
             yield indices, inputs, targets, spec_val, spec_mask
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Training function helpers.
+
 
 def rampup(epoch, rampup_length):
     if epoch < rampup_length:
@@ -231,39 +312,42 @@ def rampup(epoch, rampup_length):
         return math.exp(-p*p*5.0)
     return 1.0
 
+
 def rampdown(epoch, num_epochs, rampdown_length):
     if epoch >= (num_epochs - rampdown_length):
         ep = (epoch - (num_epochs - rampdown_length)) * 0.5
         return math.exp(-(ep * ep) / rampdown_length)
     return 1.0
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Network parameter import/export.
+
 
 def save_all_variables(fn):
     util.save_pkl({var.name: var.eval() for var in tf.global_variables()}, fn)
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Training function.
 
+
 def train(submit_config,
-          num_epochs            = 300,
-          start_epoch           = 0,
-          minibatch_size        = 16,
-          epoch_train_max       = None,
-          post_op               = None,
-          corrupt_targets       = True,
-          corrupt_params        = dict(),
-          augment_params        = dict(),
-          rampup_length         = 10,
-          rampdown_length       = 30,
-          learning_rate_max     = 0.001,
-          adam_beta1_initial    = 0.9,
-          adam_beta1_rampdown   = 0.5,
-          adam_beta2            = 0.99,
-          dataset_train         = dict(),
-          dataset_test          = dict(),
-          load_network          = None):
+          num_epochs=1,
+          start_epoch=0,
+          minibatch_size=16,
+          epoch_train_max=None,
+          post_op=None,
+          corrupt_targets=True,
+          corrupt_params=dict(),
+          augment_params=dict(),
+          rampup_length=10,
+          rampdown_length=30,
+          learning_rate_max=0.001,
+          adam_beta1_initial=0.9,
+          adam_beta1_rampdown=0.5,
+          adam_beta2=0.99,
+          dataset_train=dict(),
+          dataset_test=dict(),
+          load_network=None):
 
     result_subdir = submit_config.run_dir
 
@@ -281,7 +365,8 @@ def train(submit_config,
     print('Loading test set.')
     test_img, test_spec = load_dataset(**dataset_test)
 
-    print('Got %d training, %d test images.' % (train_img.shape[0], test_img.shape[0]))
+    print('Got %d training, %d test images.' %
+          (train_img.shape[0], test_img.shape[0]))
     print('Image size is %d x %d' % train_img.shape[1:])
     print('Spectrum size is %d x %d' % train_spec.shape[1:])
 
@@ -304,13 +389,22 @@ def train(submit_config,
             return x
 
         print('Forcing denoised spectrum to known values.')
-        spec_value_var = tf.placeholder(tf.complex64, shape=spectrum_shape, name='spec_value')
-        spec_mask_var  = tf.placeholder(tf.float32, shape=spectrum_shape, name='spec_mask')
-        denoised_spec  = tf.fft2d(tf.complex(denoised, tf.zeros_like(denoised)))                            # Take FFT of denoiser output.
-        denoised_spec  = fftshift3d(denoised_spec, False)                                                   # Shift before applying mask.
-        spec_mask_c64  = tf.cast(spec_mask_var, tf.complex64)                                               # TF wants operands to have same type.
-        denoised_spec  = spec_value_var * spec_mask_c64 + denoised_spec * (1. - spec_mask_c64)              # Force known frequencies.
-        denoised       = tf.cast(tf.spectral.ifft2d(fftshift3d(denoised_spec, True)), dtype = tf.float32)   # Shift back and IFFT.
+        spec_value_var = tf.placeholder(
+            tf.complex64, shape=spectrum_shape, name='spec_value')
+        spec_mask_var = tf.placeholder(
+            tf.float32, shape=spectrum_shape, name='spec_mask')
+        # Take FFT of denoiser output.
+        denoised_spec = tf.fft2d(tf.complex(denoised, tf.zeros_like(denoised)))
+        # Shift before applying mask.
+        denoised_spec = fftshift3d(denoised_spec, False)
+        # TF wants operands to have same type.
+        spec_mask_c64 = tf.cast(spec_mask_var, tf.complex64)
+        # Force known frequencies.
+        denoised_spec = spec_value_var * spec_mask_c64 + \
+            denoised_spec * (1. - spec_mask_c64)
+        # Shift back and IFFT.
+        denoised = tf.cast(tf.spectral.ifft2d(
+            fftshift3d(denoised_spec, True)), dtype=tf.float32)
     else:
         assert post_op is None
 
@@ -318,22 +412,26 @@ def train(submit_config,
         targets_clamped = tf.clip_by_value(targets_var, -0.5, 0.5)
         denoised_clamped = tf.clip_by_value(denoised, -0.5, 0.5)
         # Keep MSE for each item in the minibatch for PSNR computation:
-        loss_clamped = tf.reduce_mean((targets_clamped - denoised_clamped)**2, axis=[1,2])
+        loss_clamped = tf.reduce_mean(
+            (targets_clamped - denoised_clamped)**2, axis=[1, 2])
         diff_expr = targets_var - denoised
         loss_test = tf.reduce_mean(diff_expr**2)
         loss_train = loss_test
 
     # Construct optimization function.
 
-    learning_rate_var = tf.placeholder(tf.float32, shape=[], name='learning_rate')
+    learning_rate_var = tf.placeholder(
+        tf.float32, shape=[], name='learning_rate')
     adam_beta1_var = tf.placeholder(tf.float32, shape=[], name='adam_beta1')
-    train_updates = tf.train.AdamOptimizer(learning_rate=learning_rate_var, beta1=adam_beta1_var, beta2=adam_beta2).minimize(loss_train)
+    train_updates = tf.train.AdamOptimizer(
+        learning_rate=learning_rate_var, beta1=adam_beta1_var, beta2=adam_beta2).minimize(loss_train)
 
     # Create a log file for Tensorboard
     summary_log = tf.summary.FileWriter(submit_config.run_dir)
     summary_log.add_graph(tf.get_default_graph())
 
-    ctx.update(loss='run %d' % submit_config.run_id, cur_epoch=0, max_epoch=num_epochs)
+    ctx.update(loss='run %d' % submit_config.run_id,
+               cur_epoch=0, max_epoch=num_epochs)
 
     # Start training.
     session = tf.get_default_session()
@@ -348,16 +446,19 @@ def train(submit_config,
 
         rampup_value = rampup(epoch, rampup_length)
         rampdown_value = rampdown(epoch, num_epochs, rampdown_length)
-        adam_beta1 = (rampdown_value * adam_beta1_initial) + ((1.0 - rampdown_value) * adam_beta1_rampdown)
+        adam_beta1 = (rampdown_value * adam_beta1_initial) + \
+            ((1.0 - rampdown_value) * adam_beta1_rampdown)
         learning_rate = rampup_value * rampdown_value * learning_rate_max
 
         # Epoch initializer.
 
         if epoch == num_start_epoch:
-            session.run(tf.global_variables_initializer(), feed_dict={adam_beta1_var: adam_beta1})
+            session.run(tf.global_variables_initializer(),
+                        feed_dict={adam_beta1_var: adam_beta1})
             if load_network:
                 print('Loading network %s' % load_network)
-                var_dict = util.load_pkl(os.path.join(result_subdir, load_network))
+                var_dict = util.load_pkl(
+                    os.path.join(result_subdir, load_network))
                 for var in tf.global_variables():
                     if var.name in var_dict:
                         tf.assign(var, var_dict[var.name]).eval()
@@ -373,16 +474,22 @@ def train(submit_config,
         for (indices, inputs, targets, input_spec_val, input_spec_mask) in iterate_minibatches(train_img, train_spec, batch_size=minibatch_size, shuffle=True, corrupt_targets=corrupt_targets, corrupt_params=corrupt_params, augment_params=augment_params, max_images=epoch_train_max):
             # Export example training pairs from the first batch.
             if epoch == num_start_epoch and train_n == 0:
-                img = np.concatenate([np.concatenate(inputs[:6], axis=1), np.concatenate(targets[:6], axis=1)], axis=0) + 0.5
-                scipy.misc.toimage(img, cmin=0.0, cmax=1.0).save(os.path.join(result_subdir, 'example_train.png'))
+                img = np.concatenate([np.concatenate(inputs[:6], axis=1), np.concatenate(
+                    targets[:6], axis=1)], axis=0) + 0.5  # scipy.misc.toimage(img, cmin=0.0, cmax=1.0)
+                bytedata = bytescale(img, cmin=0.0, cmax=1.0)
+                Image.fromarray(bytedata).save(
+                    os.path.join(result_subdir, 'example_train.png'))
 
             # Construct feed dictionary.
-            feed_dict = {inputs_var: inputs, targets_var: targets, learning_rate_var: learning_rate, adam_beta1_var: adam_beta1}
+            feed_dict = {inputs_var: inputs, targets_var: targets,
+                         learning_rate_var: learning_rate, adam_beta1_var: adam_beta1}
             if post_op == 'fspec':
-                feed_dict.update({spec_value_var: input_spec_val, spec_mask_var: input_spec_mask})
+                feed_dict.update(
+                    {spec_value_var: input_spec_val, spec_mask_var: input_spec_mask})
 
             # Run.
-            loss_val, _ = session.run([loss_train, train_updates], feed_dict=feed_dict)
+            loss_val, _ = session.run(
+                [loss_train, train_updates], feed_dict=feed_dict)
 
             # Stats.
             train_loss += loss_val * len(indices)
@@ -398,21 +505,27 @@ def train(submit_config,
             # Construct feed dictionary.
             feed_dict = {inputs_var: inputs, targets_var: targets}
             if post_op == 'fspec':
-                feed_dict.update({spec_value_var: input_spec_val, spec_mask_var: input_spec_mask})
+                feed_dict.update(
+                    {spec_value_var: input_spec_val, spec_mask_var: input_spec_mask})
 
             # Run.
             if test_n == 0:
                 # Export example result.
-                loss_clamped_vals, orig, outputs = session.run([loss_clamped, denoised_orig, denoised], feed_dict=feed_dict)
+                loss_clamped_vals, orig, outputs = session.run(
+                    [loss_clamped, denoised_orig, denoised], feed_dict=feed_dict)
                 prim = [inputs[0], orig[0], outputs[0], targets[0]]
                 spec = [fftshift2d(abs(np.fft.fft2(x))) for x in prim]
                 pimg = np.concatenate(prim, axis=1) + 0.5
                 simg = np.concatenate(spec, axis=1) * 0.03
                 img = np.concatenate([pimg, simg], axis=0)
-                scipy.misc.toimage(img, cmin=0.0, cmax=1.0).save(os.path.join(result_subdir, 'img%05d.png' % epoch))
+                #scipy.misc.toimage(img, cmin=0.0, cmax=1.0)
+                bytedata = bytescale(img, cmin=0.0, cmax=1.0)
+                Image.fromarray(bytedata).save(
+                    os.path.join(result_subdir, 'img%05d.png' % epoch))
             else:
                 # Just run.
-                loss_clamped_vals, = session.run([loss_clamped], feed_dict=feed_dict)
+                loss_clamped_vals, = session.run(
+                    [loss_clamped], feed_dict=feed_dict)
 
             # Stats.
             indiv_db = 10 * np.log10(1.0 / loss_clamped_vals)
@@ -424,7 +537,8 @@ def train(submit_config,
         # Export network.
 
         if epoch % 10 == 0:
-            save_all_variables(os.path.join(result_subdir, 'network-snapshot-%05d.pkl' % epoch))
+            save_all_variables(os.path.join(
+                result_subdir, 'network-snapshot-%05d.pkl' % epoch))
 
         # Export and print stats, update progress monitor.
 
@@ -437,7 +551,8 @@ def train(submit_config,
             autosummary("Test/dB_clamped", test_db_clamped),
             autosummary("Learning_rate", learning_rate)
         ))
-        ctx.update(loss='run %d' % submit_config.run_id, cur_epoch=epoch, max_epoch=num_epochs)
+        ctx.update(loss='run %d' % submit_config.run_id,
+                   cur_epoch=epoch, max_epoch=num_epochs)
         dnnlib.tflib.autosummary.save_summaries(summary_log, epoch)
 
     # Training done, session still around. Save final network weights.
@@ -452,24 +567,31 @@ def train(submit_config,
             # Construct feed dictionary.
             feed_dict = {inputs_var: inputs, targets_var: targets}
             if post_op == 'fspec':
-                feed_dict.update({spec_value_var: input_spec_val, spec_mask_var: input_spec_mask})
+                feed_dict.update(
+                    {spec_value_var: input_spec_val, spec_mask_var: input_spec_mask})
 
             # Export example result.
-            loss_val, loss_clamped_val, orig, outputs = session.run([loss_test, loss_clamped, denoised_orig, denoised], feed_dict=feed_dict)
+            loss_val, loss_clamped_val, orig, outputs = session.run(
+                [loss_test, loss_clamped, denoised_orig, denoised], feed_dict=feed_dict)
             prim = [inputs[0], orig[0], outputs[0], targets[0]]
             spec = [fftshift2d(abs(np.fft.fft2(x))) for x in prim]
             pimg = np.concatenate(prim, axis=1) + 0.5
             simg = np.concatenate(spec, axis=1) * 0.03
             img = np.concatenate([pimg, simg], axis=0)
-            scipy.misc.toimage(img, cmin=0.0, cmax=1.0).save(os.path.join(result_subdir, 'final%05d.png' % idx))
+            #scipy.misc.toimage(img, cmin=0.0, cmax=1.0)
+            bytedata = bytescale(img, cmin=0.0, cmax=1.0)
+            Image.fromarray(bytedata).save(
+                os.path.join(result_subdir, 'final%05d.png' % idx))
 
             input_clamped = np.clip(inputs[0], -.5, .5)
             trg_clamped = np.clip(targets[0], -.5, .5)
             db = -10.0 * math.log10(loss_val)
             db_clamped = -10.0 * math.log10(loss_clamped_val)
-            db_input = -10.0 * math.log10(np.mean((input_clamped - trg_clamped)**2))
+            db_input = -10.0 * \
+                math.log10(np.mean((input_clamped - trg_clamped)**2))
 
-            fout.write('%3d: %.5f %.5f %.5f\n' % (idx, db_input, db, db_clamped))
+            fout.write('%3d: %.5f %.5f %.5f\n' %
+                       (idx, db_input, db, db_clamped))
 
             idx += 1
             if idx == 100:

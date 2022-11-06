@@ -24,9 +24,10 @@ Notes:
 
 from collections import OrderedDict
 import numpy as np
-import tensorflow as tf
-from tensorboard import summary as summary_lib
+import tensorflow._api.v2.compat.v1 as tf
+#from tensorboard import summary as summary_lib
 from tensorboard.plugins.custom_scalar import layout_pb2
+from tensorboard.plugins.custom_scalar.summary import pb as custom_scalar_pb
 
 from . import tfutil
 from .tfutil import TfExpression
@@ -37,6 +38,10 @@ _vars = OrderedDict()  # name => [var, ...]
 _immediate = OrderedDict()  # name => update_op, update_value
 _finalized = False
 _merge_op = None
+
+tf.disable_v2_behavior()
+
+tf.disable_eager_execution()
 
 
 def _create_var(name: str, value_expr: TfExpression) -> TfExpression:
@@ -58,11 +63,14 @@ def _create_var(name: str, value_expr: TfExpression) -> TfExpression:
         v = [size_expr, v, tf.square(v)]
     else:
         v = [size_expr, tf.reduce_sum(v), tf.reduce_sum(tf.square(v))]
-    v = tf.cond(tf.is_finite(v[1]), lambda: tf.stack(v), lambda: tf.zeros(3, dtype=_dtype))
+    v = tf.cond(tf.is_finite(v[1]), lambda: tf.stack(
+        v), lambda: tf.zeros(3, dtype=_dtype))
 
     with tfutil.absolute_name_scope("Autosummary/" + name_id), tf.control_dependencies(None):
-        var = tf.Variable(tf.zeros(3, dtype=_dtype), trainable=False)  # [sum(1), sum(x), sum(x**2)]
-    update_op = tf.cond(tf.is_variable_initialized(var), lambda: tf.assign_add(var, v), lambda: tf.assign(var, v))
+        # [sum(1), sum(x), sum(x**2)]
+        var = tf.Variable(tf.zeros(3, dtype=_dtype), trainable=False)
+    update_op = tf.cond(tf.is_variable_initialized(
+        var), lambda: tf.assign_add(var, v), lambda: tf.assign(var, v))
 
     if name in _vars:
         _vars[name].append(var)
@@ -105,7 +113,8 @@ def finalize_autosummaries() -> None:
         return None
 
     _finalized = True
-    tfutil.init_uninitialized_vars([var for vars_list in _vars.values() for var in vars_list])
+    tfutil.init_uninitialized_vars(
+        [var for vars_list in _vars.values() for var in vars_list])
 
     # Create summary ops.
     with tf.device(None), tf.control_dependencies(None):
@@ -114,14 +123,19 @@ def finalize_autosummaries() -> None:
             with tfutil.absolute_name_scope("Autosummary/" + name_id):
                 moments = tf.add_n(vars_list)
                 moments /= moments[0]
-                with tf.control_dependencies([moments]):  # read before resetting
-                    reset_ops = [tf.assign(var, tf.zeros(3, dtype=_dtype)) for var in vars_list]
-                    with tf.name_scope(None), tf.control_dependencies(reset_ops):  # reset before reporting
+                # read before resetting
+                with tf.control_dependencies([moments]):
+                    reset_ops = [tf.assign(var, tf.zeros(
+                        3, dtype=_dtype)) for var in vars_list]
+                    # reset before reporting
+                    with tf.name_scope(None), tf.control_dependencies(reset_ops):
                         mean = moments[1]
                         std = tf.sqrt(moments[2] - tf.square(moments[1]))
                         tf.summary.scalar(name, mean)
-                        tf.summary.scalar("xCustomScalars/" + name + "/margin_lo", mean - std)
-                        tf.summary.scalar("xCustomScalars/" + name + "/margin_hi", mean + std)
+                        tf.summary.scalar(
+                            "xCustomScalars/" + name + "/margin_lo", mean - std)
+                        tf.summary.scalar(
+                            "xCustomScalars/" + name + "/margin_hi", mean + std)
 
     # Group by category and chart name.
     cat_dict = OrderedDict()
@@ -149,8 +163,10 @@ def finalize_autosummaries() -> None:
             margin = layout_pb2.MarginChartContent(series=series)
             charts.append(layout_pb2.Chart(title=chart_name, margin=margin))
         categories.append(layout_pb2.Category(title=cat_name, chart=charts))
-    layout = summary_lib.custom_scalar_pb(layout_pb2.Layout(category=categories))
+    layout = custom_scalar_pb(
+        layout_pb2.Layout(category=categories))
     return layout
+
 
 def save_summaries(file_writer, global_step=None):
     """Call FileWriter.add_summary() with all summaries in the default graph,

@@ -67,7 +67,7 @@ class Logger(object):
 
     def write(self, text: str) -> None:
         """Write text to stdout (and a file) and optionally flush."""
-        if len(text) == 0: # workaround for a bug in VSCode debugger: sys.stdout.write(''); sys.stdout.flush() => crash
+        if len(text) == 0:  # workaround for a bug in VSCode debugger: sys.stdout.write(''); sys.stdout.flush() => crash
             return
 
         if self.file is not None:
@@ -266,7 +266,8 @@ def list_dir_recursively_with_ignore(dir_path: str, ignores: List[str] = None, a
         relative_paths = [os.path.relpath(p, dir_path) for p in absolute_paths]
 
         if add_base_to_relative:
-            relative_paths = [os.path.join(base_name, p) for p in relative_paths]
+            relative_paths = [os.path.join(base_name, p)
+                              for p in relative_paths]
 
         assert len(absolute_paths) == len(relative_paths)
         result += zip(absolute_paths, relative_paths)
