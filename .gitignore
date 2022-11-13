@@ -2,3 +2,5 @@ __pycache__/
 results/
 datasets/
 *.DS_Store
+*ipynb
+/*ipynb*/
