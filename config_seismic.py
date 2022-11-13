@@ -15,7 +15,7 @@ submit_config = dnnlib.SubmitConfig()
 submit_config.run_dir_root = "results"
 submit_config.run_dir_ignore += ['datasets', 'results']
 
-desc = "n2n-mri"
+desc = "n2n-seismic"
 
 # Tensorflow config
 # ------------------------------------------------------------------------------------------
@@ -36,9 +36,9 @@ run_desc = desc
 random_seed = 1000
 
 # ----------------------------------------------------------------------------
-# Basic MRI runs.
+# Basic Seismic runs.
 
-run_desc = 'mri'
+run_desc = 'seismic'
 train = dict(corrupt_params=dict(), augment_params=dict())
 
 run_desc += '-seismic'

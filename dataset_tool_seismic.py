@@ -22,10 +22,6 @@ import nibabel as nib
 
 OUT_RESOLUTION = 256
 
-# Select z-slices from [25,124]
-slice_min = 25
-slice_max = 125
-
 # Select train and validation subsets from seismic (these two lists shouldn't overlap)
 director = '/Users/catarinapinheiro/Documents/git/noise2noise/datasets/seismic_images/'
 files = os.listdir(director)

@@ -18,7 +18,7 @@ from dnnlib.tflib.autosummary import autosummary
 import dnnlib.tflib.tfutil as tfutil
 from PIL import Image
 
-import config_mri
+import config_seismic
 import util
 from numpy import uint8
 
@@ -177,7 +177,7 @@ def autoencoder(input):
 
 
 def load_dataset(fn, num_images=None, shuffle=False):
-    datadir = submit.get_path_from_template(config_mri.data_dir)
+    datadir = submit.get_path_from_template(config_seismic.data_dir)
     if fn.lower().endswith('.pkl'):
         abspath = os.path.join(datadir, fn)
         print('Loading dataset from', abspath)
@@ -329,7 +329,7 @@ def save_all_variables(fn):
 
 
 def train(submit_config,
-          num_epochs=1,
+          num_epochs=100,
           start_epoch=0,
           minibatch_size=16,
           epoch_train_max=None,
@@ -350,12 +350,12 @@ def train(submit_config,
     result_subdir = submit_config.run_dir
 
     # Create a run context (hides low level details, exposes simple API to manage the run)
-    ctx = dnnlib.RunContext(submit_config, config_mri)
+    ctx = dnnlib.RunContext(submit_config, config_seismic)
     # Initialize TensorFlow graph and session using good default settings
-    tfutil.init_tf(config_mri.tf_config)
+    tfutil.init_tf(config_seismic.tf_config)
 
-    tf.set_random_seed(config_mri.random_seed)
-    np.random.seed(config_mri.random_seed)
+    tf.set_random_seed(config_seismic.random_seed)
+    np.random.seed(config_seismic.random_seed)
 
     print('Loading training set.')
     train_img, train_spec = load_dataset(**dataset_train)
@@ -455,8 +455,9 @@ def train(submit_config,
                         feed_dict={adam_beta1_var: adam_beta1})
             if load_network:
                 print('Loading network %s' % load_network)
+                result_dir = "/Users/catarinapinheiro/Documents/git/noise2noise/results"
                 var_dict = util.load_pkl(
-                    os.path.join(result_subdir, load_network))
+                    os.path.join(result_dir, load_network))
                 for var in tf.global_variables():
                     if var.name in var_dict:
                         tf.assign(var, var_dict[var.name]).eval()
@@ -558,7 +559,7 @@ def train(submit_config,
     save_all_variables(os.path.join(result_subdir, 'network-final.pkl'))
 
     print("Resetting random seed and saving a bunch of example images.")
-    np.random.seed(config_mri.random_seed)
+    np.random.seed(config_seismic.random_seed)
     idx = 0
     with open(os.path.join(result_subdir, 'psnr.txt'), 'wt') as fout:
         for (indices, inputs, targets, input_spec_val, input_spec_mask) in iterate_minibatches(test_img, test_spec, batch_size=1, shuffle=True, corrupt_targets=False, corrupt_params=corrupt_params):
